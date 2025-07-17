@@ -42,7 +42,7 @@ class QAGenerator:
         
         # Get summary prompt from config
         prompt = get_prompt(self.config, "summary")
-        
+        max_context_length = self.generation_config.get("max_context_length", 8000)
         print(f"Document length: {len(document_text)} chars")
 
         #Rule of thumb to convert tokens to characters
@@ -75,7 +75,7 @@ class QAGenerator:
         else:
             messages = [
                 {"role": "system", "content": prompt},
-                {"role": "user", "content": document_text[:max_char_len]}  # Limit to max_seq_len
+                {"role": "user", "content": document_text[0:max_context_length][:max_char_len]}  # Limit to max_seq_len
             ]
             
             summary = self.client.chat_completion(
