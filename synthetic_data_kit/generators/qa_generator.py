@@ -31,7 +31,10 @@ class QAGenerator:
         self.generation_config = get_generation_config(self.config)
         self.curate_config = get_curate_config(self.config)
     
-    def generate_summary(self, document_text: str) -> str:
+    def generate_summary(self, 
+                         document_text: str, 
+                         rolling_summary: bool,
+                         max_seq_len: int = 16384) -> str:
         """Generate a summary of the document"""
         verbose = os.environ.get('SDK_VERBOSE', 'false').lower() == 'true'
         if verbose:
@@ -40,15 +43,45 @@ class QAGenerator:
         # Get summary prompt from config
         prompt = get_prompt(self.config, "summary")
         
-        messages = [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": document_text}
-        ]
-        
-        summary = self.client.chat_completion(
-            messages, 
-            temperature=0.1  # Use lower temperature for summaries
-        )
+        print(f"Document length: {len(document_text)} chars")
+
+        #Rule of thumb to convert tokens to characters
+        max_char_len = max_seq_len * 4  # Adjust based on tokenization method
+        if rolling_summary:
+            summary_per_chunk = []
+            chunks = split_into_chunks(document_text,
+                                       chunk_size=max_char_len,
+                                       overlap=0)
+            print(f"Document split into {len(chunks)} chunks for rolling summary")
+            for chunk in chunks:
+                messages = [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": chunk}
+                ]
+                new_summary = self.client.chat_completion(
+                    messages, 
+                    temperature=0.1  # Use lower temperature for summaries
+                )
+                summary_per_chunk.append(new_summary)
+                print("========= SUMMARY CHUNK =========")
+                print(new_summary)
+                print("===============================")
+
+            summary = " .".join(summary_per_chunk)
+            # Summarize again to reduce overall length and redundancy
+            summary = self.generate_summary(summary,
+                                           rolling_summary=False,
+                                           max_seq_len=max_seq_len)
+        else:
+            messages = [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": document_text[:max_char_len]}  # Limit to max_seq_len
+            ]
+            
+            summary = self.client.chat_completion(
+                messages, 
+                temperature=0.1  # Use lower temperature for summaries
+            )
         
         if verbose:
             print(f"Summary generated ({len(summary)} chars)")
@@ -294,7 +327,9 @@ class QAGenerator:
     def process_document(self, 
                        document_text: str, 
                        num_pairs: int = 25, 
-                       verbose: bool = False) -> Dict[str, Any]:
+                       verbose: bool = False,
+                       rolling_summary: bool = False,
+                       max_seq_len: int = 16384) -> Dict[str, Any]:
         """Process a document to generate QA pairs without rating"""
         # Set the verbose environment variable
         if verbose:
@@ -303,11 +338,14 @@ class QAGenerator:
             os.environ['SDK_VERBOSE'] = 'false'
         
         # Generate summary
-        summary = self.generate_summary(document_text)
+        
+        summary = self.generate_summary(document_text, 
+                                        rolling_summary=rolling_summary,
+                                        max_seq_len=max_seq_len)
         
         # Generate QA pairs
         qa_pairs = self.generate_qa_pairs(document_text, summary, num_pairs=num_pairs)
-        
+    
         # Prepare result - no rating at this stage
         result = {
             "summary": summary,
